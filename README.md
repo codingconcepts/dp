@@ -69,4 +69,5 @@ rm -rf node1 node2
 
 ### Todos
 
-* Allow server to block requests (for things like cutovers).
+* Allow server to block requests (for things like cutovers)
+* Better error handling

@@ -97,8 +97,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "enter":
 			if i, ok := m.list.SelectedItem().(item); ok {
-				selection = string(i)
-				selectedChanged <- string(i)
+				// Clear the selected item if the same one has been selected again.
+				if selection == string(i) {
+					selection = ""
+					selectedChanged <- ""
+				} else {
+					selection = string(i)
+					selectedChanged <- string(i)
+				}
 			}
 		}
 	}
@@ -109,5 +115,5 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	return strings.Repeat(" ", titleStyle.GetPaddingLeft()) + selection + m.list.View()
+	return "\n" + selection + m.list.View()
 }

@@ -24,9 +24,10 @@ var (
 
 // RenderList creates a list and renders it.
 func RenderList(servers []string, selectionChanged chan string) error {
-	items := []list.Item{
-		item("localhost:26001"),
-		item("localhost:26002"),
+	var items []list.Item
+
+	for _, s := range servers {
+		items = append(items, item(s))
 	}
 
 	const defaultWidth = 20
@@ -76,8 +77,7 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 }
 
 type model struct {
-	list   list.Model
-	choice string
+	list list.Model
 }
 
 func (m model) Init() tea.Cmd {
@@ -92,7 +92,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch keypress := msg.String(); keypress {
-		case "ctrl+c":
+		case "ctrl+c", "esc":
 			return m, tea.Quit
 
 		case "enter":

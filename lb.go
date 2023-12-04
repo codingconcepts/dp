@@ -22,7 +22,6 @@ func main() {
 	port := flag.Int("port", 26257, "port number to listen on")
 	flag.Parse()
 
-	// Validate.
 	if len(sf) == 0 {
 		log.Fatalf("need at least 1 server")
 	}
@@ -46,7 +45,7 @@ func main() {
 	for {
 		client, err := listener.Accept()
 		if err != nil {
-			fmt.Println("error accepting client connection:", err)
+			log.Printf("error accepting client connection: %v", err)
 			continue
 		}
 
@@ -63,15 +62,15 @@ func handleServerChanged(selectedChanged chan string) {
 func handleClient(client net.Conn, server string) {
 	defer client.Close()
 
-	nonHTTPServer, err := net.Dial("tcp", server)
+	tcpServer, err := net.Dial("tcp", server)
 	if err != nil {
 		log.Printf("error connecting to server: %v", err)
 		return
 	}
-	defer nonHTTPServer.Close()
+	defer tcpServer.Close()
 
-	go io.Copy(nonHTTPServer, client)
-	io.Copy(client, nonHTTPServer)
+	go io.Copy(tcpServer, client)
+	io.Copy(client, tcpServer)
 }
 
 type stringFlags []string

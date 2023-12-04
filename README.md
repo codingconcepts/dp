@@ -60,6 +60,13 @@ cockroach sql \
   -e "SHOW TABLES"
 ```
 
+### Teardown
+
+``` sh
+pkill -9 cockroach
+rm -rf node1 node2
+```
+
 ### Todos
 
 * Allow server to block requests (for things like cutovers).

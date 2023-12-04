@@ -43,14 +43,14 @@ func main() {
 	}
 
 	for {
-		if selectedServer == "" {
-			continue
-		}
-
 		client, err := listener.Accept()
 		if err != nil {
 			log.Printf("error accepting client connection: %v", err)
 			continue
+		}
+
+		if selectedServer == "" {
+			client.Close()
 		}
 
 		go handleClient(client, selectedServer)

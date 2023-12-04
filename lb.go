@@ -51,6 +51,7 @@ func main() {
 
 		if selectedServer == "" {
 			client.Close()
+			continue
 		}
 
 		go handleClient(client, selectedServer)

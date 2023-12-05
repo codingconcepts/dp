@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"io"
@@ -18,6 +19,9 @@ const (
 var (
 	selectedServerMu sync.RWMutex
 	selectedServer   string
+
+	terminateSignalMu sync.Mutex
+	terminateSignal   chan struct{}
 )
 
 func main() {
@@ -25,6 +29,7 @@ func main() {
 	flag.Var(&sf, "server", "a collection of servers to talk to")
 
 	port := flag.Int("port", 26257, "port number to listen on")
+	forceClose := flag.Bool("force", true, "force close connections when server changes")
 	flag.Parse()
 
 	if len(sf) == 0 {
@@ -33,8 +38,9 @@ func main() {
 
 	availableServers := sf.toMap()
 	selectedServer = availableServers[0]
+	terminateSignal = make(chan struct{})
 
-	go inputLoop(availableServers)
+	go inputLoop(availableServers, *forceClose)
 
 	proxyAddr := fmt.Sprintf("localhost:%d", *port)
 	listener, err := net.Listen("tcp", proxyAddr)
@@ -67,9 +73,9 @@ func accept(listener net.Listener) error {
 	return nil
 }
 
-func inputLoop(availableServers map[int]string) {
+func inputLoop(availableServers map[int]string, forceClose bool) {
 	for {
-		fmt.Println("\033[H\033[2J")
+		//fmt.Println("\033[H\033[2J")
 		fmt.Println(availableServersString(availableServers))
 		fmt.Printf("Selected: %s\n", selectedServer)
 		fmt.Printf("\n> ")
@@ -88,13 +94,20 @@ func inputLoop(availableServers map[int]string) {
 		selectedServerMu.Lock()
 		selectedServer = availableServers[selection]
 		selectedServerMu.Unlock()
+
+		if forceClose {
+			terminateSignalMu.Lock()
+			close(terminateSignal)
+			terminateSignal = make(chan struct{})
+			terminateSignalMu.Unlock()
+		}
 	}
 }
 
 func handleClient(client net.Conn, server string) {
 	defer client.Close()
 
-	tcpServer, err := net.Dial("tcp", server)
+	tcpServer, err := dial(client, server)
 	if err != nil {
 		log.Printf("error connecting to server: %v", err)
 		return
@@ -102,7 +115,23 @@ func handleClient(client net.Conn, server string) {
 	defer tcpServer.Close()
 
 	go io.Copy(tcpServer, client)
-	io.Copy(client, tcpServer)
+	go io.Copy(client, tcpServer)
+
+	// Wait for server to change and allow function to complete (and connection
+	// to close) when it does.
+	<-terminateSignal
+}
+
+func dial(client net.Conn, server string) (net.Conn, error) {
+	if _, ok := client.(*tls.Conn); ok {
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: false,
+		}
+
+		return tls.Dial("tcp", server, tlsConfig)
+	}
+
+	return net.Dial("tcp", server)
 }
 
 type stringFlags []string

@@ -3,23 +3,28 @@ A simple TCP load balancer
 
 ### Run locally
 
-Start clusters and lb
+Start insecure cockroach cluster
 
 ``` sh
-cockroach start-single-node \
-  --insecure \
-  --listen-addr=localhost:26001 \
-  --http-addr=localhost:8001 \
-  --store node1 \
-  --background
+cockroach demo --sql-port 26001 --http-port 8001 --insecure
+```
 
-cockroach start-single-node \
-  --insecure \
-  --listen-addr=localhost:26002 \
-  --http-addr=localhost:8002 \
-  --store node2 \
-  --background
+Start secure cockroach cluster
 
+``` sh
+cockroach demo --sql-port 26002 --http-port 8002
+```
+
+Create user for secure cluster
+
+``` sql
+CREATE USER rob WITH PASSWORD 'password';
+GRANT ALL PRIVILEGES ON DATABASE defaultdb TO rob;
+```
+
+Run the load balancer
+
+``` sh
 go run lb.go \
   -server "localhost:26001" \
   -server "localhost:26002" \
@@ -41,9 +46,7 @@ Run a command against the other cluster
 
 ``` sh
 cockroach sql \
-  --host localhost:26000 \
-  --insecure \
-  -e "CREATE TABLE b (id UUID PRIMARY KEY)"
+  --url "postgres://rob:password@localhost:26002/defaultdb?sslmode=allow"
 ```
 
 Confirm that the tables have been created in the expected clusters
@@ -64,7 +67,7 @@ cockroach sql \
 
 ``` sh
 pkill -9 cockroach
-rm -rf node1 node2
+rm -rf node1 node2 inflight_trace_dump
 ```
 
 ### Todos

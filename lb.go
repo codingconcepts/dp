@@ -6,13 +6,18 @@ import (
 	"io"
 	"log"
 	"net"
+	"strconv"
 	"strings"
+	"sync"
+)
 
-	"github.com/codingconcepts/lb/pkg/list"
+const (
+	drainOption = "drain"
 )
 
 var (
-	selectedServer string
+	selectedServerMu sync.RWMutex
+	selectedServer   string
 )
 
 func main() {
@@ -26,15 +31,10 @@ func main() {
 		log.Fatalf("need at least 1 server")
 	}
 
-	selectionChanged := make(chan string, 1)
+	availableServers := sf.toMap()
+	selectedServer = availableServers[0]
 
-	go handleServerChanged(selectionChanged)
-
-	go func() {
-		if err := list.RenderList(sf, selectionChanged); err != nil {
-			log.Fatalf("error rendering list: %v", err)
-		}
-	}()
+	go inputLoop(availableServers)
 
 	proxyAddr := fmt.Sprintf("localhost:%d", *port)
 	listener, err := net.Listen("tcp", proxyAddr)
@@ -43,24 +43,51 @@ func main() {
 	}
 
 	for {
-		client, err := listener.Accept()
-		if err != nil {
-			log.Printf("error accepting client connection: %v", err)
-			continue
+		if err = accept(listener); err != nil {
+			log.Printf("error in accept: %v", err)
 		}
-
-		if selectedServer == "" {
-			client.Close()
-			continue
-		}
-
-		go handleClient(client, selectedServer)
 	}
 }
 
-func handleServerChanged(selectedChanged chan string) {
-	for server := range selectedChanged {
-		selectedServer = server
+func accept(listener net.Listener) error {
+	client, err := listener.Accept()
+	if err != nil {
+		return fmt.Errorf("accepting client connection: %w", err)
+	}
+
+	selectedServerMu.RLock()
+	defer selectedServerMu.RUnlock()
+
+	if selectedServer == "" || selectedServer == drainOption {
+		client.Close()
+		return nil
+	}
+
+	go handleClient(client, selectedServer)
+	return nil
+}
+
+func inputLoop(availableServers map[int]string) {
+	for {
+		fmt.Println("\033[H\033[2J")
+		fmt.Println(availableServersString(availableServers))
+		fmt.Printf("Selected: %s\n", selectedServer)
+		fmt.Printf("\n> ")
+
+		var input string
+		if _, err := fmt.Scan(&input); err != nil {
+			log.Printf("error reading input: %v", err)
+			continue
+		}
+
+		selection, err := strconv.Atoi(input)
+		if err != nil {
+			continue
+		}
+
+		selectedServerMu.Lock()
+		selectedServer = availableServers[selection]
+		selectedServerMu.Unlock()
 	}
 }
 
@@ -80,17 +107,33 @@ func handleClient(client net.Conn, server string) {
 
 type stringFlags []string
 
-func (sf *stringFlags) String() string {
+func availableServersString(m map[int]string) string {
 	sb := strings.Builder{}
 
-	for i, s := range *sf {
-		sb.WriteString(fmt.Sprintf("[%d] %s\n", i+1, s))
+	for i := 0; i < len(m); i++ {
+		sb.WriteString(fmt.Sprintf("[%d] %s\n", i, m[i]))
 	}
 
 	return sb.String()
 }
 
+func (sf *stringFlags) String() string {
+	return availableServersString(sf.toMap())
+}
+
 func (sf *stringFlags) Set(value string) error {
 	*sf = append(*sf, value)
 	return nil
+}
+
+func (sf *stringFlags) toMap() map[int]string {
+	m := map[int]string{
+		0: drainOption,
+	}
+
+	for i, server := range *sf {
+		m[i+1] = server
+	}
+
+	return m
 }

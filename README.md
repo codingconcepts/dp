@@ -1,7 +1,37 @@
 # lb
 A simple TCP load balancer
 
-### Run locally
+### Installation
+
+Find the release that matches your architecture on the [releases](https://github.com/codingconcepts/lb/releases) page.
+
+Download the tar, extract the executable, and move it into your PATH:
+
+```
+$ tar -xvf lb_[VERSION]-rc1_macOS.tar.gz
+```
+
+### Usage
+
+```
+$ lb -h
+
+Usage of lb:
+  -force
+        force close connections when server changes (default true)
+  -port int
+        port number to listen on (default 26257)
+  -server value
+        a collection of servers to talk to
+  -version
+        display the current version number
+```
+
+### Local example
+
+Dependencies:
+
+* [CockroachDB](https://www.cockroachlabs.com/docs/stable/cockroach-demo)
 
 Start insecure cockroach cluster
 
@@ -25,7 +55,7 @@ GRANT ALL PRIVILEGES ON DATABASE defaultdb TO rob;
 Run the load balancer
 
 ``` sh
-go run lb.go \
+lb \
   -server "localhost:26001" \
   -server "localhost:26002" \
   -port 26000

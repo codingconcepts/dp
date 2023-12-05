@@ -17,6 +17,8 @@ const (
 )
 
 var (
+	version string
+
 	selectedServerMu sync.RWMutex
 	selectedServer   string
 
@@ -25,12 +27,20 @@ var (
 )
 
 func main() {
+	log.SetFlags(0)
+
 	var sf stringFlags
 	flag.Var(&sf, "server", "a collection of servers to talk to")
 
 	port := flag.Int("port", 26257, "port number to listen on")
 	forceClose := flag.Bool("force", true, "force close connections when server changes")
+	versionFlag := flag.Bool("version", false, "display the current version number")
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Println(version)
+		return
+	}
 
 	if len(sf) == 0 {
 		log.Fatalf("need at least 1 server")

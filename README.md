@@ -31,42 +31,62 @@ go run lb.go \
   -port 26000
 ```
 
-Run a command against one cluster
+Toggle the load balancer to the first cluster
+
+```
+[0] drain
+[1] localhost:26001
+[2] localhost:26002
+
+Selected: localhost:26001
+
+> 1
+```
+
+Run a command against the first cluster
 
 ``` sh
 cockroach sql \
-  --host localhost:26000 \
-  --insecure \
+  --url "postgres://root@localhost:26000/defaultdb?sslmode=disable" \
   -e "CREATE TABLE a (id UUID PRIMARY KEY)"
 ```
 
-Change lb to point to the other server
+Toggle the load balancer to the second cluster
+
+```
+[0] drain
+[1] localhost:26001
+[2] localhost:26002
+
+Selected: localhost:26002
+
+> 2
+```
 
 Run a command against the other cluster
 
 ``` sh
 cockroach sql \
-  --url "postgres://rob:password@localhost:26002/defaultdb?sslmode=allow"
+  --url "postgres://rob:password@localhost:26000/defaultdb?sslmode=allow" \
+  -e "CREATE TABLE b (id UUID PRIMARY KEY)"
 ```
 
 Confirm that the tables have been created in the expected clusters
 
 ``` sh
 cockroach sql \
-  --host localhost:26001 \
-  --insecure \
+  --url "postgres://root@localhost:26001/defaultdb?sslmode=disable" \
   -e "SHOW TABLES"
 
 cockroach sql \
-  --host localhost:26002 \
-  --insecure \
+  --url "postgres://rob:password@localhost:26002/defaultdb?sslmode=allow" \
   -e "SHOW TABLES"
 ```
 
 ### Teardown
 
 ``` sh
-pkill -9 cockroach
+pkill -9 cockroach lb
 rm -rf node1 node2 inflight_trace_dump
 ```
 

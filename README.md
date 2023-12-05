@@ -1,22 +1,22 @@
-# lb
-A simple TCP load balancer
+# dp
+A simple database proxy
 
 ### Installation
 
-Find the release that matches your architecture on the [releases](https://github.com/codingconcepts/lb/releases) page.
+Find the release that matches your architecture on the [releases](https://github.com/codingconcepts/dp/releases) page.
 
 Download the tar, extract the executable, and move it into your PATH:
 
 ```
-$ tar -xvf lb_[VERSION]-rc1_macOS.tar.gz
+$ tar -xvf dp_0.1.0_macos_arm64.tar.gz
 ```
 
 ### Usage
 
 ```
-$ lb -h
+$ dp -h
 
-Usage of lb:
+Usage of dp:
   -force
         force close connections when server changes (default true)
   -port int
@@ -55,7 +55,7 @@ GRANT ALL PRIVILEGES ON DATABASE defaultdb TO rob;
 Run the load balancer
 
 ``` sh
-lb \
+dp \
   -server "localhost:26001" \
   -server "localhost:26002" \
   -port 26000
@@ -116,7 +116,7 @@ cockroach sql \
 ### Teardown
 
 ``` sh
-pkill -9 cockroach lb
+pkill -9 cockroach dp
 rm -rf node1 node2 inflight_trace_dump
 ```
 

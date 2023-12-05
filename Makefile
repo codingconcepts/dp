@@ -5,19 +5,19 @@ endif
 
 release: validate_version
 	# linux
-	GOOS=linux go build -ldflags "-X main.version=${VERSION}" -o lb ;\
-	tar -zcvf ./releases/lb_${VERSION}_linux.tar.gz ./lb ;\
+	GOOS=linux go build -ldflags "-X main.version=${VERSION}" -o dp ;\
+	tar -zcvf ./releases/dp_${VERSION}_linux.tar.gz ./dp ;\
 
 	# macos (arm)
-	GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.version=${VERSION}" -o lb ;\
-	tar -zcvf ./releases/lb_${VERSION}_macos_arm64.tar.gz ./lb ;\
+	GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.version=${VERSION}" -o dp ;\
+	tar -zcvf ./releases/dp_${VERSION}_macos_arm64.tar.gz ./dp ;\
 
 	# macos (amd)
-	GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.version=${VERSION}" -o lb ;\
-	tar -zcvf ./releases/lb_${VERSION}_macos_amd64.tar.gz ./lb ;\
+	GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.version=${VERSION}" -o dp ;\
+	tar -zcvf ./releases/dp_${VERSION}_macos_amd64.tar.gz ./dp ;\
 
 	# windows
-	GOOS=windows go build -ldflags "-X main.version=${VERSION}" -o lb ;\
-	tar -zcvf ./releases/lb_${VERSION}_windows.tar.gz ./lb ;\
+	GOOS=windows go build -ldflags "-X main.version=${VERSION}" -o dp ;\
+	tar -zcvf ./releases/dp_${VERSION}_windows.tar.gz ./dp ;\
 
-	rm ./lb
+	rm ./dp

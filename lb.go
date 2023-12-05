@@ -75,7 +75,7 @@ func accept(listener net.Listener) error {
 
 func inputLoop(availableServers map[int]string, forceClose bool) {
 	for {
-		//fmt.Println("\033[H\033[2J")
+		fmt.Println("\033[H\033[2J")
 		fmt.Println(availableServersString(availableServers))
 		fmt.Printf("Selected: %s\n", selectedServer)
 		fmt.Printf("\n> ")

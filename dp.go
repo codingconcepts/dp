@@ -7,9 +7,12 @@ import (
 	"io"
 	"log"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 const (
@@ -18,12 +21,6 @@ const (
 
 var (
 	version string
-
-	selectedServerMu sync.RWMutex
-	selectedServer   string
-
-	terminateSignalMu sync.Mutex
-	terminateSignal   chan struct{}
 )
 
 func main() {
@@ -31,26 +28,32 @@ func main() {
 
 	var sf stringFlags
 	flag.Var(&sf, "server", "a collection of servers to talk to")
-
-	port := flag.Int("port", 26257, "port number to listen on")
-	forceClose := flag.Bool("force", true, "force close connections when server changes")
+	httpPort := flag.Int("http-port", 3000, "port number for http requests")
+	port := flag.Int("port", 26257, "port number for proxy requests")
 	versionFlag := flag.Bool("version", false, "display the current version number")
+	debug := flag.Bool("d", false, "enable debug logging")
 	flag.Parse()
+
+	if len(sf) == 0 {
+		log.Fatalf("need at least 1 server")
+	}
 
 	if *versionFlag {
 		fmt.Println(version)
 		return
 	}
 
-	if len(sf) == 0 {
-		log.Fatalf("need at least 1 server")
+	svr := server{
+		httpPort:        *httpPort,
+		terminateSignal: make(chan struct{}, 1),
+		servers:         sf,
 	}
 
-	availableServers := sf.toMap()
-	selectedServer = availableServers[0]
-	terminateSignal = make(chan struct{})
+	go svr.httpServer(*httpPort)
 
-	go inputLoop(availableServers, *forceClose)
+	if *debug {
+		go svr.logStats()
+	}
 
 	proxyAddr := fmt.Sprintf("localhost:%d", *port)
 	listener, err := net.Listen("tcp", proxyAddr)
@@ -59,77 +62,71 @@ func main() {
 	}
 
 	for {
-		if err = accept(listener); err != nil {
+		if err = svr.accept(listener); err != nil {
 			log.Printf("error in accept: %v", err)
 		}
 	}
 }
 
-func accept(listener net.Listener) error {
+type server struct {
+	httpPort    int
+	connections int64
+	servers     stringFlags
+
+	selectedServerMu sync.RWMutex
+	selectedServer   string
+
+	terminateSignal chan struct{}
+}
+
+type stringFlags []string
+
+func (sf *stringFlags) String() string {
+	return strings.Join(*sf, ", ")
+}
+
+func (sf *stringFlags) Set(value string) error {
+	*sf = append(*sf, value)
+	return nil
+}
+
+func (svr *server) accept(listener net.Listener) error {
 	client, err := listener.Accept()
 	if err != nil {
 		return fmt.Errorf("accepting client connection: %w", err)
 	}
 
-	selectedServerMu.RLock()
-	defer selectedServerMu.RUnlock()
+	svr.selectedServerMu.RLock()
+	defer svr.selectedServerMu.RUnlock()
 
-	if selectedServer == "" || selectedServer == drainOption {
+	if svr.selectedServer == "" || svr.selectedServer == drainOption {
 		client.Close()
 		return nil
 	}
 
-	go handleClient(client, selectedServer)
+	go svr.handleClient(client)
 	return nil
 }
 
-func inputLoop(availableServers map[int]string, forceClose bool) {
-	for {
-		fmt.Println("\033[H\033[2J")
-		fmt.Println(availableServersString(availableServers))
-		fmt.Printf("Selected: %s\n", selectedServer)
-		fmt.Printf("\n> ")
-
-		var input string
-		if _, err := fmt.Scan(&input); err != nil {
-			log.Printf("error reading input: %v", err)
-			continue
-		}
-
-		selection, err := strconv.Atoi(input)
-		if err != nil {
-			continue
-		}
-
-		selectedServerMu.Lock()
-		selectedServer = availableServers[selection]
-		selectedServerMu.Unlock()
-
-		if forceClose {
-			terminateSignalMu.Lock()
-			close(terminateSignal)
-			terminateSignal = make(chan struct{})
-			terminateSignalMu.Unlock()
-		}
-	}
-}
-
-func handleClient(client net.Conn, server string) {
-	defer client.Close()
-
-	tcpServer, err := dial(client, server)
+func (svr *server) handleClient(client net.Conn) {
+	tcpServer, err := dial(client, svr.selectedServer)
 	if err != nil {
-		log.Printf("error connecting to server: %v", err)
+		// Error will be obvious from connected clients.
 		return
 	}
+
+	// Ensure the client and server are closed.
 	defer tcpServer.Close()
+	defer client.Close()
 
 	go io.Copy(tcpServer, client)
 	go io.Copy(client, tcpServer)
 
 	// Wait for server to change and allow function to complete (and connection
 	// to close) when it does.
-	<-terminateSignal
+	atomic.AddInt64(&svr.connections, 1)
+	<-svr.terminateSignal
+	atomic.AddInt64(&svr.connections, -1)
 }
 
 func dial(client net.Conn, server string) (net.Conn, error) {
@@ -144,35 +141,71 @@ func dial(client net.Conn, server string) (net.Conn, error) {
 	return net.Dial("tcp", server)
 }
 
-type stringFlags []string
+func (svr *server) httpServer(port int) {
+	router := fiber.New()
+	router.Post("/selected_server", handleSelectedServer(svr))
+	router.Delete("/selected_server", handleDrain(svr))
 
-func availableServersString(m map[int]string) string {
-	sb := strings.Builder{}
-
-	for i := 0; i < len(m); i++ {
-		sb.WriteString(fmt.Sprintf("[%d] %s\n", i, m[i]))
-	}
-
-	return sb.String()
+	log.Fatal(router.Listen(fmt.Sprintf(":%d", port)))
 }
 
-func (sf *stringFlags) String() string {
-	return availableServersString(sf.toMap())
+type selectedServerRequest struct {
+	Server     string `json:"server"`
+	ForceClose bool   `json:"force_close"`
 }
 
-func (sf *stringFlags) Set(value string) error {
-	*sf = append(*sf, value)
-	return nil
+func handleSelectedServer(svr *server) fiber.Handler {
+	return func(ctx *fiber.Ctx) error {
+		var req selectedServerRequest
+		if err := ctx.BodyParser(&req); err != nil {
+			return fiber.NewError(fiber.StatusUnprocessableEntity, "expected json request with 'server' parameter")
+		}
+
+		svr.selectedServerMu.Lock()
+		svr.selectedServer = req.Server
+		svr.selectedServerMu.Unlock()
+
+		if req.ForceClose {
+			close(svr.terminateSignal)
+			svr.terminateSignal = make(chan struct{})
+		}
+
+		return nil
+	}
 }
 
-func (sf *stringFlags) toMap() map[int]string {
-	m := map[int]string{
-		0: drainOption,
-	}
+func handleDrain(svr *server) fiber.Handler {
+	return func(ctx *fiber.Ctx) error {
+		svr.selectedServerMu.Lock()
+		svr.selectedServer = ""
+		svr.selectedServerMu.Unlock()
 
-	for i, server := range *sf {
-		m[i+1] = server
-	}
+		close(svr.terminateSignal)
+		svr.terminateSignal = make(chan struct{})
 
-	return m
+		return nil
+	}
+}
+
+func (svr *server) logStats() {
+	for range time.NewTicker(time.Second).C {
+		fmt.Println("\033[H\033[2J")
+		fmt.Printf("connections: %d\n", atomic.LoadInt64(&svr.connections))
+		fmt.Println("servers:")
+		svr.printServers()
+	}
+}
+
+func (svr *server) printServers() {
+	svr.selectedServerMu.RLock()
+	defer svr.selectedServerMu.RUnlock()
+
+	for _, s := range svr.servers {
+		selectedIndicator := "  "
+		if s == svr.selectedServer {
+			selectedIndicator = " *"
+		}
+
+		fmt.Printf("\n %s %s", selectedIndicator, s)
+	}
 }

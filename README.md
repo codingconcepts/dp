@@ -1,5 +1,5 @@
 # dp
-A simple database proxy
+A simple dynamic proxy
 
 ### Installation
 
@@ -56,21 +56,19 @@ Run the load balancer
 
 ``` sh
 dp \
-  -server "localhost:26001" \
-  -server "localhost:26002" \
-  -port 26000
+  --server "localhost:26001" \
+  --server "localhost:26002" \
+  --port 26000 \
+  --http-port 3000 \
+  -d
 ```
 
 Toggle the load balancer to the first cluster
 
-```
-[0] drain
-[1] localhost:26001
-[2] localhost:26002
-
-Selected: localhost:26001
-
-> 1
+``` sh
+curl http://localhost:3000/selected_server \
+  -H 'Content-Type:application/json' \
+  -d '{"server": "localhost:26001", "force_close": true }'
 ```
 
 Run a command against the first cluster
@@ -83,14 +81,10 @@ cockroach sql \
 
 Toggle the load balancer to the second cluster
 
-```
-[0] drain
-[1] localhost:26001
-[2] localhost:26002
-
-Selected: localhost:26002
-
-> 2
+``` sh
+curl http://localhost:3000/selected_server \
+  -H 'Content-Type:application/json' \
+  -d '{"server": "localhost:26002", "force_close": true }'
 ```
 
 Run a command against the other cluster
@@ -113,6 +107,13 @@ cockroach sql \
   -e "SHOW TABLES"
 ```
 
+Drain
+
+``` sh
+curl -X DELETE http://localhost:3000/selected_server \
+  -H 'Content-Type:application/json'
+```
+
 ### Teardown
 
 ``` sh
@@ -122,4 +123,5 @@ rm -rf node1 node2 inflight_trace_dump
 
 ### Todos
 
+* Wrap terminateSignal and mu in server struct
 * Better error handling

@@ -7,16 +7,12 @@ import (
 	"io"
 	"log"
 	"net"
-	"strings"
+	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 
-	"github.com/gofiber/fiber/v2"
-)
-
-const (
-	drainOption = "drain"
+	"github.com/codingconcepts/errhandler"
+	"github.com/samber/lo"
 )
 
 var (
@@ -25,35 +21,25 @@ var (
 
 func main() {
 	log.SetFlags(0)
-
-	var sf stringFlags
-	flag.Var(&sf, "server", "a collection of servers to talk to")
-	httpPort := flag.Int("http-port", 3000, "port number for http requests")
 	port := flag.Int("port", 26257, "port number for proxy requests")
-	versionFlag := flag.Bool("version", false, "display the current version number")
-	debug := flag.Bool("d", false, "enable debug logging")
+	ctlPort := flag.Int("ctl-port", 3000, "port number for proxy control requests")
+	showVersion := flag.Bool("version", false, "show the application version")
+	debug := flag.Bool("debug", false, "enable debug-level logging")
 	flag.Parse()
 
-	if len(sf) == 0 {
-		log.Fatalf("need at least 1 server")
-	}
-
-	if *versionFlag {
-		fmt.Println(version)
+	if *showVersion {
+		log.Printf("dp version %s", version)
 		return
 	}
 
 	svr := server{
-		httpPort:        *httpPort,
+		httpPort:        *ctlPort,
 		terminateSignal: make(chan struct{}, 1),
-		servers:         sf,
+		serverGroups:    map[string]group{},
+		debug:           *debug,
 	}
 
-	go svr.httpServer(*httpPort)
-
-	if *debug {
-		go svr.logStats()
-	}
+	go svr.httpServer(*ctlPort)
 
 	proxyAddr := fmt.Sprintf("localhost:%d", *port)
 	listener, err := net.Listen("tcp", proxyAddr)
@@ -71,23 +57,17 @@ func main() {
 type server struct {
 	httpPort    int
 	connections int64
-	servers     stringFlags
+	debug       bool
 
-	selectedServerMu sync.RWMutex
-	selectedServer   string
+	serversMu    sync.RWMutex
+	serverGroups map[string]group
 
 	terminateSignal chan struct{}
 }
 
-type stringFlags []string
-
-func (sf *stringFlags) String() string {
-	return strings.Join(*sf, ", ")
-}
-
-func (sf *stringFlags) Set(value string) error {
-	*sf = append(*sf, value)
-	return nil
+type group struct {
+	Active  bool     `json:"active"`
+	Servers []string `json:"servers"`
 }
 
 func (svr *server) accept(listener net.Listener) error {
@@ -96,20 +76,24 @@ func (svr *server) accept(listener net.Listener) error {
 		return fmt.Errorf("accepting client connection: %w", err)
 	}
 
-	svr.selectedServerMu.RLock()
-	defer svr.selectedServerMu.RUnlock()
+	servers := svr.activeServers()
 
-	if svr.selectedServer == "" || svr.selectedServer == drainOption {
+	if len(servers) == 0 {
 		client.Close()
 		return nil
 	}
 
-	go svr.handleClient(client)
+	server := lo.Sample(servers)
+	if svr.debug {
+		fmt.Printf("server: %s\n", server)
+	}
+
+	go svr.handleClient(client, server)
 	return nil
 }
 
-func (svr *server) handleClient(client net.Conn) {
-	tcpServer, err := dial(client, svr.selectedServer)
+func (svr *server) handleClient(client net.Conn, server string) {
+	tcpServer, err := dial(client, server)
 	if err != nil {
 		// Error will be obvious from connected clients.
 		return
@@ -142,70 +126,125 @@ func dial(client net.Conn, server string) (net.Conn, error) {
 }
 
 func (svr *server) httpServer(port int) {
-	router := fiber.New()
-	router.Post("/selected_server", handleSelectedServer(svr))
-	router.Delete("/selected_server", handleDrain(svr))
+	m := http.NewServeMux()
 
-	log.Fatal(router.Listen(fmt.Sprintf(":%d", port)))
+	m.Handle("GET /groups", errhandler.Wrap(svr.handleGetGroups))
+	m.Handle("POST /groups", errhandler.Wrap(svr.handleSetGroup))
+	m.Handle("DELETE /groups/{group}", errhandler.Wrap(svr.handleDeleteGroup))
+	m.Handle("POST /activate", errhandler.Wrap(svr.handleActivation))
+
+	s := &http.Server{
+		Handler: m,
+		Addr:    fmt.Sprintf(":%d", port),
+	}
+
+	log.Fatal(s.ListenAndServe())
 }
 
-type selectedServerRequest struct {
-	Server     string `json:"server"`
-	ForceClose bool   `json:"force_close"`
+func (svr *server) handleGetGroups(w http.ResponseWriter, r *http.Request) error {
+	svr.serversMu.RLock()
+	defer svr.serversMu.RUnlock()
+
+	return errhandler.SendJSON(w, svr.serverGroups)
 }
 
-func handleSelectedServer(svr *server) fiber.Handler {
-	return func(ctx *fiber.Ctx) error {
-		var req selectedServerRequest
-		if err := ctx.BodyParser(&req); err != nil {
-			return fiber.NewError(fiber.StatusUnprocessableEntity, "expected json request with 'server' parameter")
+type setGroupRequest struct {
+	Name    string   `json:"name"`
+	Servers []string `json:"servers"`
+}
+
+func (svr *server) handleSetGroup(w http.ResponseWriter, r *http.Request) error {
+	var req setGroupRequest
+	if err := errhandler.ParseJSON(r, &req); err != nil {
+		return errhandler.Error(http.StatusUnprocessableEntity, err)
+	}
+
+	log.Printf("[SET] group: %q servers: %v", req.Name, req.Servers)
+
+	svr.setGroupServers(req.Name, req.Servers)
+
+	return nil
+}
+
+func (svr *server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) error {
+	group := r.PathValue("group")
+
+	svr.deleteGroup(group)
+
+	return nil
+}
+
+type activationRequest struct {
+	Groups []string `json:"groups"`
+}
+
+func (svr *server) handleActivation(w http.ResponseWriter, r *http.Request) error {
+	var req activationRequest
+	if err := errhandler.ParseJSON(r, &req); err != nil {
+		return errhandler.Error(http.StatusUnprocessableEntity, err)
+	}
+
+	svr.setActiveGroups(req.Groups)
+
+	close(svr.terminateSignal)
+	svr.terminateSignal = make(chan struct{})
+
+	return nil
+}
+
+func (svr *server) deleteGroup(group string) {
+	svr.serversMu.Lock()
+	defer svr.serversMu.Unlock()
+
+	// Delete group.
+	delete(svr.serverGroups, group)
+}
+
+func (svr *server) setGroupServers(g string, servers []string) {
+	svr.serversMu.Lock()
+	defer svr.serversMu.Unlock()
+
+	if foundGroup, ok := svr.serverGroups[g]; ok {
+		foundGroup.Servers = servers
+		svr.serverGroups[g] = foundGroup
+	} else {
+		svr.serverGroups[g] = group{
+			Active:  false,
+			Servers: servers,
 		}
+	}
+}
 
-		svr.selectedServerMu.Lock()
-		svr.selectedServer = req.Server
-		svr.selectedServerMu.Unlock()
+func (svr *server) setActiveGroups(groups []string) {
+	svr.serversMu.Lock()
+	defer svr.serversMu.Unlock()
 
-		if req.ForceClose {
-			close(svr.terminateSignal)
-			svr.terminateSignal = make(chan struct{})
+	// Disable all groups.
+	for k, v := range svr.serverGroups {
+		v.Active = false
+		svr.serverGroups[k] = v
+	}
+
+	// Enable given groups.
+	for _, g := range groups {
+		if foundGroup, ok := svr.serverGroups[g]; ok {
+			foundGroup.Active = true
+			svr.serverGroups[g] = foundGroup
 		}
-
-		return nil
 	}
 }
 
-func handleDrain(svr *server) fiber.Handler {
-	return func(ctx *fiber.Ctx) error {
-		svr.selectedServerMu.Lock()
-		svr.selectedServer = ""
-		svr.selectedServerMu.Unlock()
+func (svr *server) activeServers() []string {
+	svr.serversMu.RLock()
+	defer svr.serversMu.RUnlock()
 
-		close(svr.terminateSignal)
-		svr.terminateSignal = make(chan struct{})
+	var servers []string
 
-		return nil
-	}
-}
-
-func (svr *server) logStats() {
-	for range time.NewTicker(time.Second).C {
-		fmt.Println("\033[H\033[2J")
-		fmt.Printf("connections: %d\n", atomic.LoadInt64(&svr.connections))
-		fmt.Println("servers:")
-		svr.printServers()
-	}
-}
-
-func (svr *server) printServers() {
-	svr.selectedServerMu.RLock()
-	defer svr.selectedServerMu.RUnlock()
-
-	for _, s := range svr.servers {
-		selectedIndicator := "  "
-		if s == svr.selectedServer {
-			selectedIndicator = " *"
+	for _, group := range svr.serverGroups {
+		if group.Active {
+			servers = append(servers, group.Servers...)
 		}
-
-		fmt.Printf("\n %s %s", selectedIndicator, s)
 	}
+
+	return servers
 }

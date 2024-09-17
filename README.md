@@ -33,92 +33,76 @@ Dependencies:
 
 * [CockroachDB](https://www.cockroachlabs.com/docs/stable/cockroach-demo)
 
-Start insecure cockroach cluster
+Start first cluster
 
 ``` sh
 cockroach demo --sql-port 26001 --http-port 8001 --insecure
 ```
 
-Start secure cockroach cluster
+Start second cluster
 
 ``` sh
-cockroach demo --sql-port 26002 --http-port 8002
-```
-
-Create user for secure cluster
-
-``` sql
-CREATE USER rob WITH PASSWORD 'password';
-GRANT ALL PRIVILEGES ON DATABASE defaultdb TO rob;
+cockroach demo --sql-port 26002 --http-port 8002 --insecure
 ```
 
 Run the load balancer
 
 ``` sh
-dp \
-  --server "localhost:26001" \
-  --server "localhost:26002" \
-  --port 26000 \
-  --http-port 3000 \
-  -d
+go run dp.go \
+--port 26000 \
+--ctl-port 3000
 ```
 
-Toggle the load balancer to the first cluster
+Add and activate the first cluster in the load balancer
 
 ``` sh
-curl http://localhost:3000/selected_server \
+curl http://localhost:3000/groups \
   -H 'Content-Type:application/json' \
-  -d '{"server": "localhost:26001", "force_close": true }'
-```
+  -d '{"name": "first", "servers": ["localhost:26001"]}'
 
-Run a command against the first cluster
-
-``` sh
-cockroach sql \
-  --url "postgres://root@localhost:26000/defaultdb?sslmode=disable" \
-  -e "CREATE TABLE a (id UUID PRIMARY KEY)"
-```
-
-Toggle the load balancer to the second cluster
-
-``` sh
-curl http://localhost:3000/selected_server \
+curl http://localhost:3000/activate \
   -H 'Content-Type:application/json' \
-  -d '{"server": "localhost:26002", "force_close": true }'
+  -d '{"groups": ["first"]}'
 ```
 
-Run a command against the other cluster
+Run a command against the first cluster (making use of the [see](https://github.com/codingconcepts/see) CLI)
 
 ``` sh
+see -n 1 \
 cockroach sql \
-  --url "postgres://rob:password@localhost:26000/defaultdb?sslmode=allow" \
-  -e "CREATE TABLE b (id UUID PRIMARY KEY)"
+--url "postgres://root@localhost:26000/defaultdb?sslmode=disable" \
+-e "SELECT crdb_internal.cluster_id()"
 ```
 
-Confirm that the tables have been created in the expected clusters
+Add the second cluster to the load balancer
 
 ``` sh
-cockroach sql \
-  --url "postgres://root@localhost:26001/defaultdb?sslmode=disable" \
-  -e "SHOW TABLES"
-
-cockroach sql \
-  --url "postgres://rob:password@localhost:26002/defaultdb?sslmode=allow" \
-  -e "SHOW TABLES"
+curl http://localhost:3000/groups \
+  -H 'Content-Type:application/json' \
+  -d '{"name": "second", "servers": ["localhost:26002"]}'
 ```
 
-Drain
+Toggle the load balancer to the second cluster and observe the cluster id change
 
 ``` sh
-curl -X DELETE http://localhost:3000/selected_server \
-  -H 'Content-Type:application/json'
+curl http://localhost:3000/activate \
+  -H 'Content-Type:application/json' \
+  -d '{"groups": ["second"]}'
+```
+
+Drain and observe everything go to shit
+
+``` sh
+curl http://localhost:3000/activate \
+  -H 'Content-Type:application/json' \
+  -d '{"groups": []}'
 ```
 
 ### Teardown
 
 ``` sh
-pkill -9 cockroach dp
-rm -rf node1 node2 inflight_trace_dump
+pkill -9 cockroach dp main
+rm -rf inflight_trace_dump
 ```
 
 ### Todos

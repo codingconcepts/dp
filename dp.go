@@ -47,6 +47,8 @@ func main() {
 		log.Fatalf("error starting proxy server: %v", err)
 	}
 
+	log.Printf("ready")
+
 	for {
 		if err = svr.accept(listener); err != nil {
 			log.Printf("error in accept: %v", err)
@@ -142,6 +144,9 @@ func (svr *server) httpServer(port int) {
 }
 
 func (svr *server) handleGetGroups(w http.ResponseWriter, r *http.Request) error {
+	log.Println("[START] handleGetGroups")
+	defer log.Println("[END] handleGetGroups")
+
 	svr.serversMu.RLock()
 	defer svr.serversMu.RUnlock()
 
@@ -154,6 +159,9 @@ type setGroupRequest struct {
 }
 
 func (svr *server) handleSetGroup(w http.ResponseWriter, r *http.Request) error {
+	log.Println("[START] handleSetGroup")
+	defer log.Println("[END] handleSetGroup")
+
 	var req setGroupRequest
 	if err := errhandler.ParseJSON(r, &req); err != nil {
 		return errhandler.Error(http.StatusUnprocessableEntity, err)
@@ -167,6 +175,9 @@ func (svr *server) handleSetGroup(w http.ResponseWriter, r *http.Request) error 
 }
 
 func (svr *server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) error {
+	log.Println("[START] handleDeleteGroup")
+	defer log.Println("[END] handleDeleteGroup")
+
 	group := r.PathValue("group")
 
 	svr.deleteGroup(group)
@@ -179,6 +190,9 @@ type activationRequest struct {
 }
 
 func (svr *server) handleActivation(w http.ResponseWriter, r *http.Request) error {
+	log.Println("[START] handleActivation")
+	defer log.Println("[END] handleActivation")
+
 	var req activationRequest
 	if err := errhandler.ParseJSON(r, &req); err != nil {
 		return errhandler.Error(http.StatusUnprocessableEntity, err)
@@ -219,18 +233,29 @@ func (svr *server) setActiveGroups(groups []string) {
 	svr.serversMu.Lock()
 	defer svr.serversMu.Unlock()
 
-	// Disable all groups.
+	// Disable all groups (drain unless a group is found)
 	for k, v := range svr.serverGroups {
 		v.Active = false
 		svr.serverGroups[k] = v
 	}
 
 	// Enable given groups.
+	var found bool
+
 	for _, g := range groups {
 		if foundGroup, ok := svr.serverGroups[g]; ok {
+			log.Printf("activating %q", g)
+
 			foundGroup.Active = true
 			svr.serverGroups[g] = foundGroup
+
+			found = true
 		}
+	}
+
+	// If no groups, log that we've drained.
+	if !found {
+		log.Printf("drained")
 	}
 }
 

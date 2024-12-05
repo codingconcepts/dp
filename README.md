@@ -17,14 +17,14 @@ $ tar -xvf dp_0.1.0_macos_arm64.tar.gz
 $ dp -h
 
 Usage of dp:
-  -force
-        force close connections when server changes (default true)
+  -ctl-port int
+        port number for proxy control requests (default 3000)
+  -debug
+        enable debug-level logging
   -port int
-        port number to listen on (default 26257)
-  -server value
-        a collection of servers to talk to
+        port number for proxy requests (default 26257)
   -version
-        display the current version number
+        show the application version
 ```
 
 ### Local example

@@ -11,11 +11,8 @@ build: validate_version
 run: validate_version
 	docker run --rm -it \
 		codingconcepts/dp:${VERSION} \
-			--server "localhost:26001" \
-			--server "localhost:26002" \
 			--port 26257 \
-			--ctl-port 3000 \
-			--debug
+			--ctl-port 3000
 
 push: validate_version
 	docker push codingconcepts/dp:${VERSION}

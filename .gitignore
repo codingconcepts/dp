@@ -24,3 +24,6 @@ go.work
 node1
 node2
 releases
+
+# MacOS specific files
+.DS_Store

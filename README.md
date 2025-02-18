@@ -3,28 +3,15 @@ A simple dynamic proxy
 
 ### Installation
 
-Find the release that matches your architecture on the [releases](https://github.com/codingconcepts/dp/releases) page.
+The easiest way to get started with dp is via Docker:
 
-Download the tar, extract the executable, and move it into your PATH:
-
-```
-$ tar -xvf dp_0.1.0_macos_arm64.tar.gz
-```
-
-### Usage
-
-```
-$ dp -h
-
-Usage of dp:
-  -force
-        force close connections when server changes (default true)
-  -port int
-        port number to listen on (default 26257)
-  -server value
-        a collection of servers to talk to
-  -version
-        display the current version number
+```sh
+docker run -d \
+  --name dp \
+  --network host \
+    codingconcepts/dp:v0.7.0 \
+    --port 26257 \
+    --ctl-port 3000
 ```
 
 ### Local example

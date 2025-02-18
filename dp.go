@@ -8,10 +8,12 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 
 	"github.com/codingconcepts/errhandler"
+	"github.com/rs/zerolog"
 	"github.com/samber/lo"
 )
 
@@ -24,19 +26,26 @@ func main() {
 	port := flag.Int("port", 26257, "port number for proxy requests")
 	ctlPort := flag.Int("ctl-port", 3000, "port number for proxy control requests")
 	showVersion := flag.Bool("version", false, "show the application version")
-	debug := flag.Bool("debug", false, "enable debug-level logging")
+	verbose := flag.Bool("verbose", false, "enable verbose logging")
 	flag.Parse()
 
+	logger := zerolog.New(zerolog.ConsoleWriter{
+		Out: os.Stderr,
+		PartsExclude: []string{
+			zerolog.TimestampFieldName,
+		},
+	}).Level(lo.Ternary(*verbose, zerolog.DebugLevel, zerolog.InfoLevel))
+
 	if *showVersion {
-		log.Printf("dp version %s", version)
+		logger.Info().Str("version", version).Msg("")
 		return
 	}
 
 	svr := server{
 		httpPort:        *ctlPort,
+		logger:          logger,
 		terminateSignal: make(chan struct{}, 1),
 		serverGroups:    map[string]group{},
-		debug:           *debug,
 	}
 
 	go svr.httpServer(*ctlPort)
@@ -59,7 +68,7 @@ func main() {
 type server struct {
 	httpPort    int
 	connections int64
-	debug       bool
+	logger      zerolog.Logger
 
 	serversMu    sync.RWMutex
 	serverGroups map[string]group
@@ -73,6 +82,9 @@ type group struct {
 }
 
 func (svr *server) accept(listener net.Listener) error {
+	svr.logger.Debug().Str("action", "connect").Str("addr", listener.Addr().String()).Msg("")
+	defer svr.logger.Debug().Str("action", "connect").Str("addr", listener.Addr().String()).Msg("")
+
 	client, err := listener.Accept()
 	if err != nil {
 		return fmt.Errorf("accepting client connection: %w", err)
@@ -86,9 +98,6 @@ func (svr *server) accept(listener net.Listener) error {
 	}
 
 	server := lo.Sample(servers)
-	if svr.debug {
-		fmt.Printf("server: %s\n", server)
-	}
 
 	go svr.handleClient(client, server)
 	return nil
@@ -144,8 +153,8 @@ func (svr *server) httpServer(port int) {
 }
 
 func (svr *server) handleGetGroups(w http.ResponseWriter, r *http.Request) error {
-	log.Println("[START] handleGetGroups")
-	defer log.Println("[END] handleGetGroups")
+	svr.logger.Info().Str("action", "get groups").Msg("started")
+	defer svr.logger.Info().Str("action", "get groups").Msg("finished")
 
 	svr.serversMu.RLock()
 	defer svr.serversMu.RUnlock()
@@ -159,8 +168,8 @@ type setGroupRequest struct {
 }
 
 func (svr *server) handleSetGroup(w http.ResponseWriter, r *http.Request) error {
-	log.Println("[START] handleSetGroup")
-	defer log.Println("[END] handleSetGroup")
+	svr.logger.Info().Str("action", "set groups").Msg("started")
+	defer svr.logger.Info().Str("action", "set groups").Msg("finished")
 
 	var req setGroupRequest
 	if err := errhandler.ParseJSON(r, &req); err != nil {
@@ -175,8 +184,8 @@ func (svr *server) handleSetGroup(w http.ResponseWriter, r *http.Request) error 
 }
 
 func (svr *server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) error {
-	log.Println("[START] handleDeleteGroup")
-	defer log.Println("[END] handleDeleteGroup")
+	svr.logger.Info().Str("action", "delete groups").Msg("started")
+	defer svr.logger.Info().Str("action", "delete groups").Msg("finished")
 
 	group := r.PathValue("group")
 
@@ -190,8 +199,8 @@ type activationRequest struct {
 }
 
 func (svr *server) handleActivation(w http.ResponseWriter, r *http.Request) error {
-	log.Println("[START] handleActivation")
-	defer log.Println("[END] handleActivation")
+	svr.logger.Info().Str("action", "activate").Msg("started")
+	defer svr.logger.Info().Str("action", "activate").Msg("finished")
 
 	var req activationRequest
 	if err := errhandler.ParseJSON(r, &req); err != nil {
@@ -244,7 +253,7 @@ func (svr *server) setActiveGroups(groups []string) {
 
 	for _, g := range groups {
 		if foundGroup, ok := svr.serverGroups[g]; ok {
-			log.Printf("activating %q", g)
+			svr.logger.Info().Str("group", g).Msg("")
 
 			foundGroup.Active = true
 			svr.serverGroups[g] = foundGroup
@@ -255,7 +264,7 @@ func (svr *server) setActiveGroups(groups []string) {
 
 	// If no groups, log that we've drained.
 	if !found {
-		log.Printf("drained")
+		svr.logger.Info().Msg("drained")
 	}
 }
 

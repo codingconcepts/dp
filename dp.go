@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -23,6 +24,7 @@ var (
 
 func main() {
 	log.SetFlags(0)
+
 	port := flag.Int("port", 26257, "port number for proxy requests")
 	ctlPort := flag.Int("ctl-port", 3000, "port number for proxy control requests")
 	showVersion := flag.Bool("version", false, "show the application version")
@@ -77,7 +79,7 @@ type server struct {
 }
 
 type group struct {
-	Active  bool     `json:"active"`
+	Weight  float64  `json:"weight"`
 	Servers []string `json:"servers"`
 }
 
@@ -90,17 +92,71 @@ func (svr *server) accept(listener net.Listener) error {
 		return fmt.Errorf("accepting client connection: %w", err)
 	}
 
-	servers := svr.activeServers()
-
-	if len(servers) == 0 {
+	server := svr.selectServerByWeight()
+	if server == "" {
 		client.Close()
 		return nil
 	}
 
-	server := lo.Sample(servers)
-
 	go svr.handleClient(client, server)
 	return nil
+}
+
+func (svr *server) selectServerByWeight() string {
+	svr.serversMu.RLock()
+	defer svr.serversMu.RUnlock()
+
+	var activeGroups []struct {
+		name   string
+		weight float64
+	}
+	var totalWeight float64
+
+	for name, group := range svr.serverGroups {
+		if group.Weight > 0 && len(group.Servers) > 0 {
+			activeGroups = append(activeGroups, struct {
+				name   string
+				weight float64
+			}{name, group.Weight})
+			totalWeight += group.Weight
+		}
+	}
+
+	if len(activeGroups) == 0 {
+		return ""
+	}
+
+	// Select group based on weight
+	r := rand.Float64() * totalWeight
+	var cumulativeWeight float64
+	var selectedGroup string
+
+	for _, g := range activeGroups {
+		cumulativeWeight += g.weight
+		if r <= cumulativeWeight {
+			selectedGroup = g.name
+			break
+		}
+	}
+
+	// If we didn't select a group log an error.
+	if selectedGroup == "" {
+		svr.logger.Fatal().
+			Any("groups", activeGroups).
+			Float64("total_weight", totalWeight).
+			Msg("no group selected")
+	}
+
+	// Now randomly select a server from the chosen group
+	servers := svr.serverGroups[selectedGroup].Servers
+	if len(servers) == 0 {
+		svr.logger.Fatal().
+			Any("servers", svr.serverGroups[selectedGroup].Servers).
+			Str("group", selectedGroup).
+			Msg("no servers available")
+	}
+
+	return servers[rand.Intn(len(servers))]
 }
 
 func (svr *server) handleClient(client net.Conn, server string) {
@@ -165,6 +221,7 @@ func (svr *server) handleGetGroups(w http.ResponseWriter, r *http.Request) error
 type setGroupRequest struct {
 	Name    string   `json:"name"`
 	Servers []string `json:"servers"`
+	Weight  float64  `json:"weight"`
 }
 
 func (svr *server) handleSetGroup(w http.ResponseWriter, r *http.Request) error {
@@ -176,9 +233,9 @@ func (svr *server) handleSetGroup(w http.ResponseWriter, r *http.Request) error 
 		return errhandler.Error(http.StatusUnprocessableEntity, err)
 	}
 
-	log.Printf("[SET] group: %q servers: %v", req.Name, req.Servers)
+	log.Printf("[SET] group: %q servers: %v weight: %.2f", req.Name, req.Servers, req.Weight)
 
-	svr.setGroupServers(req.Name, req.Servers)
+	svr.setGroupServers(req.Name, req.Servers, req.Weight)
 
 	return nil
 }
@@ -195,7 +252,8 @@ func (svr *server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) err
 }
 
 type activationRequest struct {
-	Groups []string `json:"groups"`
+	Groups  []string  `json:"groups"`
+	Weights []float64 `json:"weights"`
 }
 
 func (svr *server) handleActivation(w http.ResponseWriter, r *http.Request) error {
@@ -207,7 +265,7 @@ func (svr *server) handleActivation(w http.ResponseWriter, r *http.Request) erro
 		return errhandler.Error(http.StatusUnprocessableEntity, err)
 	}
 
-	svr.setActiveGroups(req.Groups)
+	svr.setActiveGroups(req.Groups, req.Weights)
 
 	close(svr.terminateSignal)
 	svr.terminateSignal = make(chan struct{})
@@ -219,66 +277,59 @@ func (svr *server) deleteGroup(group string) {
 	svr.serversMu.Lock()
 	defer svr.serversMu.Unlock()
 
-	// Delete group.
 	delete(svr.serverGroups, group)
 }
 
-func (svr *server) setGroupServers(g string, servers []string) {
+func (svr *server) setGroupServers(g string, servers []string, weight float64) {
 	svr.serversMu.Lock()
 	defer svr.serversMu.Unlock()
 
 	if foundGroup, ok := svr.serverGroups[g]; ok {
 		foundGroup.Servers = servers
+		if weight > 0 {
+			foundGroup.Weight = weight
+		}
 		svr.serverGroups[g] = foundGroup
 	} else {
 		svr.serverGroups[g] = group{
-			Active:  false,
+			Weight:  weight,
 			Servers: servers,
 		}
 	}
 }
 
-func (svr *server) setActiveGroups(groups []string) {
+func (svr *server) setActiveGroups(groups []string, weights []float64) {
 	svr.serversMu.Lock()
 	defer svr.serversMu.Unlock()
 
-	// Disable all groups (drain unless a group is found)
 	for k, v := range svr.serverGroups {
-		v.Active = false
+		v.Weight = 0
 		svr.serverGroups[k] = v
 	}
 
-	// Enable given groups.
 	var found bool
+	var totalWeight float64
 
-	for _, g := range groups {
+	for i, g := range groups {
+		weight := float64(0)
+		if i < len(weights) {
+			weight = weights[i]
+		}
+
 		if foundGroup, ok := svr.serverGroups[g]; ok {
-			svr.logger.Info().Str("group", g).Msg("")
+			svr.logger.Info().Str("group", g).Float64("weight", weight).Msg("")
 
-			foundGroup.Active = true
+			if weight > 0 {
+				foundGroup.Weight = weight
+			}
 			svr.serverGroups[g] = foundGroup
 
+			totalWeight += foundGroup.Weight
 			found = true
 		}
 	}
 
-	// If no groups, log that we've drained.
 	if !found {
 		svr.logger.Info().Msg("drained")
 	}
-}
-
-func (svr *server) activeServers() []string {
-	svr.serversMu.RLock()
-	defer svr.serversMu.RUnlock()
-
-	var servers []string
-
-	for _, group := range svr.serverGroups {
-		if group.Active {
-			servers = append(servers, group.Servers...)
-		}
-	}
-
-	return servers
 }

@@ -35,3 +35,4 @@ release: validate_version
 	tar -zcvf ./releases/dp_${VERSION}_windows.tar.gz ./dp ;\
 
 	rm ./dp
+	open releases

@@ -9,7 +9,7 @@ The easiest way to get started with dp is via Docker:
 docker run -d \
   --name dp \
   --network host \
-    codingconcepts/dp:v0.7.0 \
+    codingconcepts/dp:v0.8.0 \
     --port 26257 \
     --ctl-port 3000
 ```
@@ -43,13 +43,15 @@ go run dp.go \
 Add and activate the first cluster in the load balancer
 
 ``` sh
+# Add first server group.
 curl http://localhost:3000/groups \
   -H 'Content-Type:application/json' \
-  -d '{"name": "first", "servers": ["localhost:26001"]}'
+  -d '{ "name": "first", "servers": ["localhost:26001"] }'
 
+# Point all traffic to the first sever group.
 curl http://localhost:3000/activate \
   -H 'Content-Type:application/json' \
-  -d '{"groups": ["first"]}'
+  -d '{ "groups": ["first"], "weights": [100, 0] }'
 ```
 
 Run a command against the first cluster (making use of the [see](https://github.com/codingconcepts/see) CLI)
@@ -64,20 +66,23 @@ cockroach sql \
 Add the second cluster to the load balancer
 
 ``` sh
+# Add second server group.
 curl http://localhost:3000/groups \
   -H 'Content-Type:application/json' \
-  -d '{"name": "second", "servers": ["localhost:26002"]}'
-```
+  -d '{ "name": "second", "servers": ["localhost:26002"] }'
 
-Toggle the load balancer to the second cluster and observe the cluster id change
-
-``` sh
+# Point traffic to both server groups equally.
 curl http://localhost:3000/activate \
   -H 'Content-Type:application/json' \
-  -d '{"groups": ["second"]}'
+  -d '{ "groups": ["first", "second"], "weights": [50, 50] }'
+
+# Point all traffic to the second sever group.
+curl http://localhost:3000/activate \
+  -H 'Content-Type:application/json' \
+  -d '{ "groups": ["first", "second"], "weights": [0, 100] }'
 ```
 
-Drain and observe everything go to shit
+Drain and observe everything start to fail
 
 ``` sh
 curl http://localhost:3000/activate \

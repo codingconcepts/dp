@@ -9,8 +9,9 @@ The easiest way to get started with dp is via Docker:
 docker run -d \
   --name dp \
   --network host \
-    codingconcepts/dp:v0.8.0 \
+    codingconcepts/dp:v0.9.0 \
     --port 26257 \
+    --port 8080 \
     --ctl-port 3000
 ```
 

@@ -3,6 +3,9 @@ ifndef VERSION
 	$(error VERSION is undefined)
 endif
 
+test:
+	go test ./... -v -cover
+
 build: validate_version
 	docker build -t codingconcepts/dp:${VERSION} \
 		--build-arg version=${VERSION} \

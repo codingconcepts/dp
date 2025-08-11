@@ -32,26 +32,34 @@ Start second cluster
 cockroach demo --sql-port 26002 --http-port 8002 --insecure
 ```
 
-Run the load balancer
+Run load balancers
 
 ``` sh
-go run dp.go \
---port 26000 \
---ctl-port 3000
+go run dp.go --port 26000 --port 8000 --ctl-port 3000
 ```
 
 Add and activate the first cluster in the load balancer
 
 ``` sh
-# Add first server group.
-curl http://localhost:3000/groups \
-  -H 'Content-Type:application/json' \
-  -d '{ "name": "first", "servers": ["localhost:26001"] }'
+# Add server groups.
+curl http://localhost:3000/ports/26000/groups \
+--json '{ "name": "primary", "servers": ["localhost:26001"] }'
 
-# Point all traffic to the first sever group.
-curl http://localhost:3000/activate \
-  -H 'Content-Type:application/json' \
-  -d '{ "groups": ["first"], "weights": [100, 0] }'
+curl http://localhost:3000/ports/26000/groups \
+--json '{ "name": "standby", "servers": ["localhost:26002"] }'
+
+curl http://localhost:3000/ports/8000/groups \
+--json '{ "name": "primary", "servers": ["localhost:8001"] }'
+
+curl http://localhost:3000/ports/8000/groups \
+--json '{ "name": "standby", "servers": ["localhost:8002"] }'
+
+# Point all traffic to primary sever groups.
+curl http://localhost:3000/ports/26000/activate \
+--json '{ "groups": ["primary"], "weights": [100] }'
+
+curl http://localhost:3000/ports/8000/activate \
+--json '{ "groups": ["primary"], "weights": [100] }'
 ```
 
 Run a command against the first cluster (making use of the [see](https://github.com/codingconcepts/see) CLI)
@@ -60,34 +68,27 @@ Run a command against the first cluster (making use of the [see](https://github.
 see -n 1 \
 cockroach sql \
 --url "postgres://root@localhost:26000/defaultdb?sslmode=disable" \
--e "SELECT crdb_internal.cluster_id()"
+-e "SELECT now(), crdb_internal.cluster_id()"
 ```
 
-Add the second cluster to the load balancer
+Point traffic to the standby cluster.
 
 ``` sh
-# Add second server group.
-curl http://localhost:3000/groups \
-  -H 'Content-Type:application/json' \
-  -d '{ "name": "second", "servers": ["localhost:26002"] }'
+curl http://localhost:3000/ports/26000/activate \
+--json '{ "groups": ["standby"], "weights": [100] }'
 
-# Point traffic to both server groups equally.
-curl http://localhost:3000/activate \
-  -H 'Content-Type:application/json' \
-  -d '{ "groups": ["first", "second"], "weights": [50, 50] }'
-
-# Point all traffic to the second sever group.
-curl http://localhost:3000/activate \
-  -H 'Content-Type:application/json' \
-  -d '{ "groups": ["first", "second"], "weights": [0, 100] }'
+curl http://localhost:3000/ports/8000/activate \
+--json '{ "groups": ["standby"], "weights": [100] }'
 ```
 
 Drain and observe everything start to fail
 
 ``` sh
-curl http://localhost:3000/activate \
-  -H 'Content-Type:application/json' \
-  -d '{"groups": []}'
+curl http://localhost:3000/ports/26000/activate \
+--json '{"groups": []}'
+
+curl http://localhost:3000/ports/8000/activate \
+--json '{"groups": []}'
 ```
 
 ### Teardown

@@ -154,7 +154,7 @@ func (svr *Server) selectServerByWeight(port int) string {
 }
 
 func (svr *Server) handleClient(client net.Conn, server string, port int) {
-	tcpServer, err := dial(server)
+	tcpServer, err := net.Dial("tcp", server)
 	if err != nil {
 		// Error will be obvious from connected clients.
 		return
@@ -172,10 +172,6 @@ func (svr *Server) handleClient(client net.Conn, server string, port int) {
 	atomic.AddInt64(&svr.connections, 1)
 	<-svr.terminateSignals[port]
 	atomic.AddInt64(&svr.connections, -1)
-}
-
-func dial(server string) (net.Conn, error) {
-	return net.Dial("tcp", server)
 }
 
 func (svr *Server) HTTPServer(port int) {

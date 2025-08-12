@@ -7,9 +7,14 @@ test:
 	go test ./... -v -cover
 
 build: validate_version
-	docker build -t codingconcepts/dp:${VERSION} \
+	- docker buildx create --name multiarch --use
+
+	- docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		-t codingconcepts/dp:${VERSION} \
 		--build-arg version=${VERSION} \
-		--no-cache .
+		--push \
+		.
 
 run: validate_version
 	docker run --rm -it \

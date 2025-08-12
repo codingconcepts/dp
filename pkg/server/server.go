@@ -1,7 +1,6 @@
 package server
 
 import (
-	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
@@ -155,7 +154,7 @@ func (svr *Server) selectServerByWeight(port int) string {
 }
 
 func (svr *Server) handleClient(client net.Conn, server string, port int) {
-	tcpServer, err := dial(client, server)
+	tcpServer, err := dial(server)
 	if err != nil {
 		// Error will be obvious from connected clients.
 		return
@@ -175,15 +174,7 @@ func (svr *Server) handleClient(client net.Conn, server string, port int) {
 	atomic.AddInt64(&svr.connections, -1)
 }
 
-func dial(client net.Conn, server string) (net.Conn, error) {
-	if _, ok := client.(*tls.Conn); ok {
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: false,
-		}
-
-		return tls.Dial("tcp", server, tlsConfig)
-	}
-
+func dial(server string) (net.Conn, error) {
 	return net.Dial("tcp", server)
 }
 

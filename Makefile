@@ -6,7 +6,7 @@ endif
 test:
 	go test ./... -v -cover
 
-build: validate_version
+build_and_push: validate_version
 	- docker buildx create --name multiarch --use
 
 	- docker buildx build \
@@ -21,9 +21,6 @@ run: validate_version
 		codingconcepts/dp:${VERSION} \
 			--port 26257 \
 			--ctl-port 3000
-
-push: validate_version
-	docker push codingconcepts/dp:${VERSION}
 
 release: validate_version
 	# linux

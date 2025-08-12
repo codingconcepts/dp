@@ -43,30 +43,67 @@ Add and activate the first cluster in the load balancer
 
 ``` sh
 # Add server groups.
-curl http://localhost:3000/ports/26000/groups \
+curl -s http://localhost:3000/ports/26000/groups \
 --json '{ "name": "primary", "servers": ["localhost:26001"] }'
 
-curl http://localhost:3000/ports/26000/groups \
+curl -s http://localhost:3000/ports/26000/groups \
 --json '{ "name": "standby", "servers": ["localhost:26002"] }'
 
-curl http://localhost:3000/ports/8000/groups \
+curl -s http://localhost:3000/ports/8000/groups \
 --json '{ "name": "primary", "servers": ["localhost:8001"] }'
 
-curl http://localhost:3000/ports/8000/groups \
+curl -s http://localhost:3000/ports/8000/groups \
 --json '{ "name": "standby", "servers": ["localhost:8002"] }'
 
 # Point all traffic to primary sever groups.
-curl http://localhost:3000/ports/26000/activate \
+curl -s http://localhost:3000/ports/26000/activate \
 --json '{ "groups": ["primary"], "weights": [100] }'
 
-curl http://localhost:3000/ports/8000/activate \
+curl -s http://localhost:3000/ports/8000/activate \
 --json '{ "groups": ["primary"], "weights": [100] }'
+
+# View load balancer configuration.
+curl -s http://localhost:3000/ports | jq
 ```
 
-Run a command against the first cluster (making use of the [see](https://github.com/codingconcepts/see) CLI)
+At this point, the configuration will resemble the following, with two top-level ports, each with a primary and a secondary and a single server for each (although this can be configured to support an arbitrary number of servers):
+
+```json
+{
+  "26000": {
+    "primary": {
+      "weight": 100,
+      "servers": [
+        "localhost:26001"
+      ]
+    },
+    "standby": {
+      "weight": 0,
+      "servers": [
+        "localhost:26002"
+      ]
+    }
+  },
+  "8000": {
+    "primary": {
+      "weight": 100,
+      "servers": [
+        "localhost:8001"
+      ]
+    },
+    "standby": {
+      "weight": 0,
+      "servers": [
+        "localhost:8002"
+      ]
+    }
+  }
+}
+```
+
+Run a command against the first cluster (via the load balancer):
 
 ``` sh
-see -n 1 \
 cockroach sql \
 --url "postgres://root@localhost:26000/defaultdb?sslmode=disable" \
 -e "SELECT now(), crdb_internal.cluster_id()"
@@ -75,21 +112,37 @@ cockroach sql \
 Point traffic to the standby cluster.
 
 ``` sh
-curl http://localhost:3000/ports/26000/activate \
+curl -s http://localhost:3000/ports/26000/activate \
 --json '{ "groups": ["standby"], "weights": [100] }'
 
-curl http://localhost:3000/ports/8000/activate \
+curl -s http://localhost:3000/ports/8000/activate \
 --json '{ "groups": ["standby"], "weights": [100] }'
 ```
 
-Drain and observe everything start to fail
+Run the same command again but this time against the standby cluster (via the load balancer):
 
 ``` sh
-curl http://localhost:3000/ports/26000/activate \
+cockroach sql \
+--url "postgres://root@localhost:26000/defaultdb?sslmode=disable" \
+-e "SELECT now(), crdb_internal.cluster_id()"
+```
+
+Drain the load balancer
+
+``` sh
+curl -s http://localhost:3000/ports/26000/activate \
 --json '{"groups": []}'
 
-curl http://localhost:3000/ports/8000/activate \
+curl -s http://localhost:3000/ports/8000/activate \
 --json '{"groups": []}'
+```
+
+Run the same command again but this time it will fail because the load balancer is drained:
+
+``` sh
+cockroach sql \
+--url "postgres://root@localhost:26000/defaultdb?sslmode=disable" \
+-e "SELECT now(), crdb_internal.cluster_id()"
 ```
 
 ### Teardown

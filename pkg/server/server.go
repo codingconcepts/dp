@@ -154,6 +154,8 @@ func (svr *Server) selectServerByWeight(port int) string {
 }
 
 func (svr *Server) handleClient(client net.Conn, server string, port int) {
+	svr.logger.Debug().Str("server", server).Msg("dialling")
+
 	tcpServer, err := net.Dial("tcp", server)
 	if err != nil {
 		// Error will be obvious from connected clients.
